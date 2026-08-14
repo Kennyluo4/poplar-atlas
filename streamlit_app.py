@@ -220,8 +220,13 @@ def landing_page(libraries):
         'Spatial datasets support section-level tissue maps, curated cell-type views, and gene-expression summaries.</div>',
         unsafe_allow_html=True,
     )
+    # Landing page illustration(s) — prefer renamed site image, fallback to older name
+    if (IMAGE_DIR / "website_pic_spatial.png").exists():
+        st.image(str(IMAGE_DIR / "website_pic_spatial.png"), use_column_width=True)
+    elif (IMAGE_DIR / "spatial.png").exists():
+        st.image(str(IMAGE_DIR / "spatial.png"), use_column_width=True)
     if (IMAGE_DIR / "scRNA_workflow.png").exists():
-        st.image(str(IMAGE_DIR / "scRNA_workflow.png"), width="stretch")
+        st.image(str(IMAGE_DIR / "scRNA_workflow.png"), use_column_width=True)
 
 
 def main():
@@ -231,13 +236,17 @@ def main():
     with st.sidebar:
         if (IMAGE_DIR / "BioPoplar_Logo2.png").exists():
             st.image(str(IMAGE_DIR / "BioPoplar_Logo2.png"), width="stretch")
+        # Quick home button: reset the tissue selector and return to landing page
+        if st.button("Home"):
+            st.session_state["tissue"] = "Select a tissue…"
+            st.experimental_rerun()
         st.markdown("### Atlas explorer")
         if not libraries:
             st.error("No H5AD datasets were found in the data directory.")
             return
         library = st.selectbox("Data modality", list(libraries), index=0)
         tissue_options = ["Select a tissue…"] + list(libraries[library])
-        tissue = st.selectbox("Tissue atlas", tissue_options)
+        tissue = st.selectbox("Tissue atlas", tissue_options, key="tissue")
         st.caption("Processed expression matrices · Populus spatial and single-cell atlas")
 
     if tissue == "Select a tissue…":
