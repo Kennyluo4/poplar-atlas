@@ -221,12 +221,10 @@ def landing_page(libraries):
         unsafe_allow_html=True,
     )
     # Landing page illustration(s) — prefer renamed site image, fallback to older name
-    if (IMAGE_DIR / "website_pic_spatial.png").exists():
-        st.image(str(IMAGE_DIR / "website_pic_spatial.png"), use_column_width=True)
-    elif (IMAGE_DIR / "spatial.png").exists():
-        st.image(str(IMAGE_DIR / "spatial.png"), use_column_width=True)
     if (IMAGE_DIR / "scRNA_workflow.png").exists():
         st.image(str(IMAGE_DIR / "scRNA_workflow.png"), use_column_width=True)
+    if (IMAGE_DIR / "website_pic_spatial.png").exists():
+        st.image(str(IMAGE_DIR / "website_pic_spatial.png"), use_column_width=True)
 
 
 def main():
