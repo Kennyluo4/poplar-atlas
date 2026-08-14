@@ -122,29 +122,40 @@ def category_colors(values):
     return categories, dict(zip(categories.categories, colors))
 
 
-def spatial_figure(adata, section_col, section, color_by, cluster_col, celltype_col, gene):
+def spatial_figure(adata, section_col, section, color_by, celltype_col, gene):
     mask = np.asarray(adata.obs[section_col].astype(str) == str(section))
     coords = np.asarray(adata.obsm["spatial"])[mask]
     fig, ax = plt.subplots(figsize=(8.5, 7), facecolor="#FFFFFF")
+
+    # Match Scanpy's Visium convention: spot coordinates are full-resolution
+    # pixels and the embedded tissue image is displayed using its lowres scale.
+    spatial_entry = adata.uns.get("spatial", {}).get(str(section), {})
+    tissue_image = spatial_entry.get("images", {}).get("lowres")
+    lowres_scale = float(
+        spatial_entry.get("scalefactors", {}).get("tissue_lowres_scalef", 1.0)
+    )
+    has_tissue_image = tissue_image is not None
+    plot_coords = coords * lowres_scale if has_tissue_image else coords
+    if has_tissue_image:
+        ax.imshow(tissue_image, origin="upper")
 
     if color_by == "Gene expression":
         values = expression_vector(adata, gene)[mask]
         order = np.argsort(values)
         scatter = ax.scatter(
-            coords[order, 0], coords[order, 1], c=values[order], cmap=EXPRESSION_CMAP,
-            s=18, linewidths=0, alpha=.95, rasterized=True,
+            plot_coords[order, 0], plot_coords[order, 1], c=values[order], cmap=EXPRESSION_CMAP,
+            s=20, linewidths=0, alpha=.9, rasterized=True,
         )
         cbar = fig.colorbar(scatter, ax=ax, shrink=.72, pad=.025)
         cbar.set_label(f"Processed expression · {gene}", color="#415047")
         title = gene
     else:
-        column = celltype_col if color_by == "Cell type" else cluster_col
-        categories, color_map = category_colors(adata.obs.loc[mask, column].astype(str))
+        categories, color_map = category_colors(adata.obs.loc[mask, celltype_col].astype(str))
         for category in categories.categories:
             selected = np.asarray(categories == category)
             ax.scatter(
-                coords[selected, 0], coords[selected, 1], s=16, linewidths=0,
-                color=color_map[category], label=str(category), alpha=.9, rasterized=True,
+                plot_coords[selected, 0], plot_coords[selected, 1], s=18, linewidths=0,
+                color=color_map[category], label=str(category), alpha=.88, rasterized=True,
             )
         ax.legend(
             title=color_by, bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False,
@@ -154,14 +165,22 @@ def spatial_figure(adata, section_col, section, color_by, cluster_col, celltype_
 
     ax.set_title(f"{section} · {title}", loc="left", fontsize=14, color="#173E2C", pad=12)
     ax.set_aspect("equal")
-    ax.invert_yaxis()
+    if not has_tissue_image:
+        ax.invert_yaxis()
     ax.axis("off")
     fig.tight_layout()
     return fig
 
 
 def plot_grouped_expression(adata, genes, groupby, kind):
-    if kind == "Dot plot":
+    if kind == "Violin":
+        sc.pl.violin(
+            adata, keys=genes, groupby=groupby, rotation=90,
+            multi_panel=True, show=False, stripplot=False,
+        )
+        fig = plt.gcf()
+        fig.set_size_inches(max(9, len(genes) * 3.2), 5.5)
+    elif kind == "Dot plot":
         result = sc.pl.dotplot(
             adata, genes, groupby=groupby, show=False, cmap=EXPRESSION_CMAP,
             colorbar_title="Mean expression", size_title="Fraction expressed",
@@ -198,7 +217,7 @@ def landing_page(libraries):
     st.markdown("### Start exploring")
     st.markdown(
         '<div class="dataset-note">Choose a data modality and tissue from the sidebar. '
-        'Spatial datasets support section-level maps, cluster and cell-type views, and multi-gene summaries.</div>',
+        'Spatial datasets support section-level tissue maps, curated cell-type views, and gene-expression summaries.</div>',
         unsafe_allow_html=True,
     )
     if (IMAGE_DIR / "scRNA_workflow.png").exists():
@@ -236,7 +255,6 @@ def main():
     with st.spinner(f"Loading {tissue}…"):
         adata = load_dataset(str(dataset_path))
 
-    cluster_col = obs_column(adata, ["cluster_name", "seurat_clusters", "cluster"])
     celltype_col = obs_column(adata, ["cell_type_name", "celltypes_v2", "celltypes", "celltype"])
     section_col = obs_column(adata, ["section", "slice_id", "sample"])
 
@@ -262,7 +280,7 @@ def main():
                 st.markdown("#### Map controls")
                 sections = sorted(adata.obs[section_col].astype(str).unique())
                 section = st.selectbox("Section", sections)
-                choices = [x for x, col in [("Cell type", celltype_col), ("Cluster", cluster_col)] if col]
+                choices = ["Cell type"] if celltype_col else []
                 choices.append("Gene expression")
                 color_by = st.radio("Color spots by", choices)
                 gene = None
@@ -271,15 +289,16 @@ def main():
                 n_spots = int((adata.obs[section_col].astype(str) == section).sum())
                 st.caption(f"{n_spots:,} spots in this section")
             with display:
-                fig = spatial_figure(adata, section_col, section, color_by, cluster_col, celltype_col, gene)
+                fig = spatial_figure(adata, section_col, section, color_by, celltype_col, gene)
                 st.pyplot(fig, width="stretch")
                 plt.close(fig)
         elif "X_umap" in adata.obsm:
-            color_options = [x for x in [celltype_col, cluster_col] if x]
-            color = st.selectbox("Color embedding by", color_options)
-            fig = sc.pl.umap(adata, color=color, show=False, return_fig=True)
-            st.pyplot(fig, width="stretch")
-            plt.close(fig)
+            if celltype_col:
+                fig = sc.pl.umap(adata, color=celltype_col, show=False, return_fig=True)
+                st.pyplot(fig, width="stretch")
+                plt.close(fig)
+            else:
+                st.info("This dataset has no cell-type annotation available for coloring.")
         else:
             st.info("This compact dataset does not contain spatial coordinates or an embedding.")
 
@@ -288,14 +307,11 @@ def main():
         with left:
             st.markdown("#### Expression controls")
             genes = st.multiselect("Genes", adata.var_names.tolist(), max_selections=20)
-            group_options = {"Cell type": celltype_col, "Cluster": cluster_col}
-            group_options = {label: col for label, col in group_options.items() if col}
-            group_label = st.radio("Group observations by", list(group_options))
-            plot_kind = st.radio("Summary", ["Dot plot", "Heatmap"], horizontal=True)
-            st.caption("Select up to 20 genes for a readable, publication-style summary.")
+            plot_kind = st.radio("Plot type", ["Violin", "Dot plot", "Heatmap"], horizontal=True)
+            st.caption("All summaries are grouped by the curated cell-type annotation.")
         with right:
-            if genes:
-                fig = plot_grouped_expression(adata, genes, group_options[group_label], plot_kind)
+            if genes and celltype_col:
+                fig = plot_grouped_expression(adata, genes, celltype_col, plot_kind)
                 st.pyplot(fig, width="stretch")
                 plt.close(fig)
             else:
@@ -311,7 +327,7 @@ def main():
             "Field": ["File", "Matrix", "Annotations", "Spatial coordinates", "Raw counts"],
             "Value": [
                 spec["file"], f"{adata.n_obs:,} × {adata.n_vars:,} sparse expression",
-                ", ".join(x for x in [celltype_col, cluster_col] if x) or "None",
+                celltype_col or "None",
                 "Available" if "spatial" in adata.obsm else "Not included", "Not included",
             ],
         })
