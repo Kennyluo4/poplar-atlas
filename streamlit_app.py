@@ -13,7 +13,7 @@ DATA_DIR = APP_DIR / "data"
 IMAGE_DIR = APP_DIR / "images"
 
 st.set_page_config(
-    page_title="BioPoplar Spatial Atlas",
+    page_title="BioPoplar · Populus Single-Cell & Spatial Atlas",
     page_icon="🌿",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -185,7 +185,7 @@ def landing_page(libraries):
         """
         <div class="atlas-hero">
           <div class="atlas-kicker">Populus developmental genomics</div>
-          <h1>BioPoplar Spatial Atlas</h1>
+                    <h1>BioPoplar · Populus Single-Cell & Spatial Atlas</h1>
           <p>Explore gene expression and annotated cell identities across poplar tissues using
           spatial RNA-seq and single-cell RNA sequencing.</p>
         </div>
