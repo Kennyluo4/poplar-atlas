@@ -250,15 +250,35 @@ def main():
     spec = libraries[library][tissue]
     dataset_path = DATA_DIR / spec["file"]
     if not dataset_path.exists():
-        st.error(
-            f"The configured dataset `{spec['file']}` is not available in this local data directory. "
-            "Its original scRNA-seq catalogue entry has been preserved for the production data mount."
-        )
-        return
+        alt_path = APP_DIR / spec["file"]
+        cwd_path = Path(spec["file"]) if spec["file"] else None
+        if alt_path.exists():
+            dataset_path = alt_path
+        elif cwd_path and cwd_path.exists():
+            dataset_path = cwd_path
+        else:
+            tried = [str(DATA_DIR / spec["file"]), str(alt_path), str(cwd_path) if cwd_path else "(none)"]
+            st.error(
+                "The configured dataset is not available in the local data directory or repository root. "
+                f"Tried: {tried[0]}, {tried[1]}, {tried[2]}."
+            )
+            return
     with st.spinner(f"Loading {tissue}…"):
         adata = load_dataset(str(dataset_path))
 
     celltype_col = obs_column(adata, ["cell_type_name", "celltypes_v2", "celltypes", "celltype"])
+    if not celltype_col:
+        celltype_col = obs_column(
+            adata,
+            [
+                "seurat_clusters",
+                "louvain",
+                "leiden",
+                "clusters",
+                "cluster",
+                "RNA_snn_res.0.9",
+            ],
+        )
     section_col = obs_column(adata, ["section", "slice_id", "sample"])
 
     st.markdown(
@@ -270,7 +290,11 @@ def main():
     m1.metric("Spots / cells", f"{adata.n_obs:,}")
     m2.metric("Genes", f"{adata.n_vars:,}")
     m3.metric("Cell types", f"{adata.obs[celltype_col].nunique():,}" if celltype_col else "—")
-    m4.metric("Sections", f"{adata.obs[section_col].nunique():,}" if section_col else "—")
+    # Only show sections for spatial datasets
+    if library == "Spatial RNA-seq":
+        m4.metric("Sections", f"{adata.obs[section_col].nunique():,}" if section_col else "—")
+    else:
+        m4.metric("Sections", "—")
 
     spatial_ready = library == "Spatial RNA-seq" and "spatial" in adata.obsm and section_col
     tabs = st.tabs(["Spatial explorer", "Expression summary", "Dataset information"] if spatial_ready
@@ -296,12 +320,37 @@ def main():
                 st.pyplot(fig, width="stretch")
                 plt.close(fig)
         elif "X_umap" in adata.obsm:
-            if celltype_col:
-                fig = sc.pl.umap(adata, color=celltype_col, show=False, return_fig=True)
-                st.pyplot(fig, width="stretch")
-                plt.close(fig)
-            else:
-                st.info("This dataset has no cell-type annotation available for coloring.")
+            controls, display = st.columns([1, 2.35], gap="large")
+            with controls:
+                choices = []
+                if celltype_col:
+                    choices.append("Cell type")
+                choices.append("Gene expression")
+                color_by = st.radio("Color points by", choices)
+                gene = None
+                if color_by == "Gene expression":
+                    gene = st.selectbox("Gene", adata.var_names.tolist(), index=0)
+            with display:
+                umap_coords = np.asarray(adata.obsm["X_umap"])
+                if color_by == "Gene expression":
+                    values = expression_vector(adata, gene)
+                    order = np.argsort(values)
+                    fig, ax = plt.subplots(figsize=(8.5, 7), facecolor="#FFFFFF")
+                    scatter = ax.scatter(
+                        umap_coords[order, 0], umap_coords[order, 1], c=values[order],
+                        cmap=EXPRESSION_CMAP, s=18, linewidths=0, alpha=.9, rasterized=True,
+                    )
+                    cbar = fig.colorbar(scatter, ax=ax, shrink=.72, pad=.025)
+                    cbar.set_label(f"Processed expression · {gene}", color="#415047")
+                    ax.axis("off")
+                    fig.tight_layout()
+                    st.pyplot(fig, width="stretch")
+                    plt.close(fig)
+                else:
+                    # fallback to categorical UMAP via Scanpy for consistency
+                    fig = sc.pl.umap(adata, color=celltype_col, show=False, return_fig=True)
+                    st.pyplot(fig, width="stretch")
+                    plt.close(fig)
         else:
             st.info("This compact dataset does not contain spatial coordinates or an embedding.")
 
@@ -311,7 +360,10 @@ def main():
             st.markdown("#### Expression controls")
             genes = st.multiselect("Genes", adata.var_names.tolist(), max_selections=20)
             plot_kind = st.radio("Plot type", ["Violin", "Dot plot", "Heatmap"], horizontal=True)
-            st.caption("All summaries are grouped by the curated cell-type annotation.")
+            if celltype_col:
+                st.caption(f"All summaries are grouped by the `{celltype_col}` annotation.")
+            else:
+                st.caption("Select genes to view summaries. Grouping will use cluster labels if available.")
         with right:
             if genes and celltype_col:
                 fig = plot_grouped_expression(adata, genes, celltype_col, plot_kind)
